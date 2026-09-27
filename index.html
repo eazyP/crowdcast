@@ -1,0 +1,1079 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crowdcast</title>
+<meta name="description" content="A synthetic AI live-chat crowd you can run as a stream overlay or just leave playing for atmosphere.">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  /* Deliberately single-theme: this is a broadcast overlay meant to sit on top of
+     video at all hours, like a stream chat panel — it does not follow OS light/dark. */
+  :root{
+    color-scheme: dark;
+    --bg: #16161f;
+    --bg-2: #1b1c27;
+    --panel: #1e2030;
+    --panel-2: #262838;
+    --border: #33364a;
+    --border-soft: #2a2c3d;
+    --text: #eef0f7;
+    --text-dim: #a6a9bf;
+    --text-faint: #6d7089;
+    --accent: #ffb454;
+    --accent-ink: #3a2405;
+    --accent-2: #7dd3fc;
+    --good: #7ee2a8;
+    --danger: #f68989;
+    --mod: #8ee6c1;
+    --vip: #e2a6ff;
+    --radius-lg: 18px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
+    --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+    --font-body: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  }
+
+  *{ box-sizing: border-box; }
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app{
+    max-width: 1180px;
+    margin: 0 auto;
+    padding-inline: 16px;
+    padding-block: 28px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-height: 100%;
+  }
+
+  .masthead{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .masthead h1{
+    font-family: var(--font-display);
+    font-size: clamp(22px, 3vw, 30px);
+    font-weight: 800;
+    margin: 0;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .masthead p{
+    margin: 4px 0 0;
+    color: var(--text-dim);
+    font-size: 14px;
+    max-width: 60ch;
+  }
+
+  .stage{
+    display: grid;
+    grid-template-columns: minmax(0,1fr) 300px;
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 900px){
+    .stage{ grid-template-columns: minmax(0,1fr); }
+  }
+
+  /* ---------- chat panel ---------- */
+  .chat-card{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: min(640px, 72vh);
+    position: relative;
+    box-shadow: 0 20px 60px -30px rgba(0,0,0,0.6);
+  }
+  body.overlay-mode .chat-card{
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .chat-topbar{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    flex-shrink: 0;
+  }
+  body.overlay-mode .chat-topbar{ display: none; }
+
+  .live-pill{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(246,137,137,0.12);
+    color: #ffb0b0;
+    border: 1px solid rgba(246,137,137,0.3);
+    padding: 4px 9px 4px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .live-dot{
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--danger);
+    box-shadow: 0 0 0 0 rgba(246,137,137,0.6);
+    animation: pulse 1.8s ease-out infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow: 0 0 0 0 rgba(246,137,137,0.55); }
+    70%{ box-shadow: 0 0 0 7px rgba(246,137,137,0); }
+    100%{ box-shadow: 0 0 0 0 rgba(246,137,137,0); }
+  }
+  @media (prefers-reduced-motion: reduce){ .live-dot{ animation: none; } }
+
+  .viewer-count{
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  .viewer-count span{ color: var(--text-faint); font-weight: 500; font-family: var(--font-body); font-size: 11px; }
+
+  .topic-line{
+    font-size: 12.5px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .topic-line b{ color: var(--accent); font-weight: 600; }
+
+  .gear-btn{
+    flex-shrink: 0;
+    width: 30px; height: 30px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text-dim);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    font-size: 15px;
+    transition: background .15s, color .15s;
+  }
+  .gear-btn:hover{ background: var(--border-soft); color: var(--text); }
+
+  .chat-scroll{
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 12px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .chat-scroll::-webkit-scrollbar{ width: 8px; }
+  .chat-scroll::-webkit-scrollbar-thumb{ background: var(--border); border-radius: 8px; }
+
+  .msg{
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 5px 6px;
+    border-radius: var(--radius-sm);
+    animation: rise .28s ease-out;
+  }
+  @keyframes rise{
+    from{ opacity: 0; transform: translateY(6px); }
+    to{ opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce){ .msg{ animation: none; } }
+
+  .avatar{
+    width: 26px; height: 26px; border-radius: 50%;
+    flex-shrink: 0;
+    display: grid; place-items: center;
+    font-family: var(--font-display);
+    font-size: 10.5px;
+    font-weight: 800;
+    color: rgba(0,0,0,0.62);
+    margin-top: 1px;
+  }
+
+  .msg-body{ min-width: 0; flex: 1; }
+  .msg-line{
+    font-size: var(--chat-fs, 14px);
+    line-height: 1.42;
+    word-wrap: break-word;
+    color: var(--text);
+  }
+  .uname{
+    font-weight: 700;
+    margin-right: 5px;
+  }
+  .badge{
+    display: inline-flex;
+    align-items: center;
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    padding: 1.5px 5px;
+    border-radius: 4px;
+    margin-right: 5px;
+    text-transform: uppercase;
+    transform: translateY(-1px);
+  }
+  .badge.mod{ background: rgba(142,230,193,0.16); color: var(--mod); }
+  .badge.vip{ background: rgba(226,166,255,0.16); color: var(--vip); }
+  .badge.sub{ background: rgba(255,180,84,0.16); color: var(--accent); }
+  .badge.new{ background: rgba(255,255,255,0.08); color: var(--text-faint); }
+
+  .msg.system{
+    background: rgba(255,180,84,0.07);
+    border: 1px solid rgba(255,180,84,0.16);
+    border-radius: var(--radius-sm);
+    align-items: center;
+  }
+  .msg.system .msg-line{ color: #ffd8a3; font-weight: 600; font-size: calc(var(--chat-fs, 14px) - 1px); }
+  .msg.system .avatar{ background: var(--accent); }
+
+  .msg.burst .msg-line{ font-size: calc(var(--chat-fs, 14px) + 2px); }
+
+  .jump-btn{
+    position: absolute;
+    bottom: 14px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: var(--accent-ink);
+    border: none;
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 12.5px;
+    font-weight: 700;
+    font-family: var(--font-body);
+    cursor: pointer;
+    box-shadow: 0 8px 24px -8px rgba(0,0,0,0.5);
+  }
+  .jump-btn[hidden]{ display: none; }
+
+  .overlay-restore{
+    position: fixed;
+    bottom: 18px; right: 18px;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 16px;
+    cursor: pointer;
+    display: grid; place-items: center;
+    box-shadow: 0 10px 30px -10px rgba(0,0,0,0.6);
+    z-index: 40;
+  }
+  .overlay-restore[hidden]{ display: none; }
+
+  /* ---------- control rail ---------- */
+  .rail{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    height: fit-content;
+    max-height: min(640px, 72vh);
+    overflow-y: auto;
+  }
+  .rail-scrim{
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 45;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease;
+  }
+  .rail-scrim.show{ opacity: 1; pointer-events: auto; }
+
+  @media (max-width: 900px){
+    .rail{
+      position: fixed;
+      right: 0; top: 0; bottom: 0;
+      width: min(320px, 88vw);
+      max-height: none;
+      border-radius: 0;
+      z-index: 50;
+      transform: translateX(105%);
+      transition: transform .25s ease;
+      box-shadow: -20px 0 50px -20px rgba(0,0,0,0.6);
+    }
+    .rail.open{ transform: translateX(0); }
+  }
+
+  /* Overlay mode drops the settings rail out of the layout entirely —
+     the point is a bare chat feed — and brings it back as a floating
+     drawer (at any viewport width) via the restore button. */
+  body.overlay-mode .stage{ grid-template-columns: minmax(0,1fr); }
+  body.overlay-mode .rail{
+    position: fixed;
+    right: 0; top: 0; bottom: 0;
+    width: min(320px, 88vw);
+    max-height: none;
+    border-radius: 0;
+    z-index: 50;
+    transform: translateX(105%);
+    transition: transform .25s ease;
+    box-shadow: -20px 0 50px -20px rgba(0,0,0,0.6);
+  }
+  body.overlay-mode .rail.open{ transform: translateX(0); }
+
+  .rail h2{
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    margin: 0;
+  }
+
+  .field{ display: flex; flex-direction: column; gap: 6px; }
+  .field label{ font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
+  .field input[type="text"], .field input[type="number"]{
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-body);
+    font-size: 13.5px;
+    width: 100%;
+  }
+  .field input:focus-visible, button:focus-visible, .seg button:focus-visible{
+    outline: 2px solid var(--accent-2);
+    outline-offset: 1px;
+  }
+
+  .seg{
+    display: flex;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    gap: 3px;
+  }
+  .seg button{
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 6px 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--font-body);
+  }
+  .seg button.active{ background: var(--accent); color: var(--accent-ink); }
+
+  .swatches{ display: flex; gap: 8px; }
+  .swatch{
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    position: relative;
+  }
+  .swatch.active{ border-color: var(--text); }
+
+  .toggle-row{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .toggle-row span{ font-size: 13px; font-weight: 600; }
+  .switch{
+    width: 38px; height: 22px;
+    border-radius: 999px;
+    background: var(--border);
+    border: none;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .switch::after{
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--text);
+    transition: transform .16s ease;
+  }
+  .switch.on{ background: var(--accent); }
+  .switch.on::after{ transform: translateX(16px); background: var(--accent-ink); }
+
+  .btn{
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 700;
+    font-family: var(--font-body);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .btn:hover{ background: var(--border-soft); }
+  .btn.primary{ background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .btn.primary:hover{ filter: brightness(1.05); }
+  .btn-row{ display: flex; gap: 8px; }
+  .btn-row .btn{ flex: 1; }
+
+  .rail-note{
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-faint);
+    background: var(--bg-2);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm);
+    padding: 9px 10px;
+  }
+  .rail-note code{
+    font-family: var(--font-mono);
+    background: rgba(255,255,255,0.06);
+    padding: 1px 4px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+
+  hr.div{ border: none; border-top: 1px solid var(--border-soft); margin: 0; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="masthead">
+    <div>
+      <h1>Crowdcast</h1>
+      <p>A synthetic live-chat crowd. Point a browser source at this page to overlay it on any stream, or just leave it running behind your desk.</p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="chat-card">
+      <div class="chat-topbar">
+        <div class="live-pill"><span class="live-dot"></span>Live</div>
+        <div class="viewer-count" id="viewerCount">1,284<span>watching</span></div>
+        <div class="topic-line">chat is here for <b id="topicLabel">the stream</b></div>
+        <button class="gear-btn" id="gearBtn" aria-label="Open settings" title="Settings">⚙</button>
+      </div>
+      <div class="chat-scroll" id="chatScroll"></div>
+      <button class="jump-btn" id="jumpBtn" hidden>New messages ↓</button>
+    </div>
+
+    <aside class="rail" id="rail">
+      <div class="field">
+        <label for="topicInput">Stream topic</label>
+        <input type="text" id="topicInput" maxlength="40" placeholder="e.g. the finale, a speedrun, a Q&amp;A">
+      </div>
+      <div class="field">
+        <label for="streamerInput">Streamer's name</label>
+        <input type="text" id="streamerInput" maxlength="24" placeholder="e.g. Dana">
+      </div>
+
+      <div class="field">
+        <label>Chat pace</label>
+        <div class="seg" id="paceSeg">
+          <button data-pace="chill">Chill</button>
+          <button data-pace="normal" class="active">Normal</button>
+          <button data-pace="hype">Hype</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Text size (for overlay legibility)</label>
+        <div class="seg" id="sizeSeg">
+          <button data-size="13">Small</button>
+          <button data-size="14" class="active">Medium</button>
+          <button data-size="17">Large</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Accent</label>
+        <div class="swatches" id="swatches">
+          <button class="swatch active" data-accent="#ffb454" style="background:#ffb454" aria-label="Amber accent"></button>
+          <button class="swatch" data-accent="#7dd3fc" style="background:#7dd3fc" aria-label="Sky accent"></button>
+          <button class="swatch" data-accent="#e2a6ff" style="background:#e2a6ff" aria-label="Orchid accent"></button>
+          <button class="swatch" data-accent="#7ee2a8" style="background:#7ee2a8" aria-label="Mint accent"></button>
+        </div>
+      </div>
+
+      <hr class="div">
+
+      <div class="field">
+        <label for="viewerInput">Starting viewer count</label>
+        <input type="number" id="viewerInput" min="3" max="999999" step="1">
+      </div>
+
+      <div class="toggle-row">
+        <span>Overlay mode</span>
+        <button class="switch" id="overlaySwitch" role="switch" aria-checked="false" aria-label="Toggle overlay mode"></button>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn" id="pauseBtn">⏸ Pause</button>
+        <button class="btn" id="clearBtn">Clear</button>
+      </div>
+      <button class="btn primary" id="hypeBtn">⚡ Trigger hype moment</button>
+
+      <div class="rail-note">
+        For OBS: add this page as a <b>Browser Source</b>, size it to your layout, then turn on Overlay Mode to drop the panel chrome. Settings are remembered on this device via <code>localStorage</code>.
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="rail-scrim" id="railScrim"></div>
+<button class="overlay-restore" id="overlayRestore" hidden aria-label="Show settings" title="Show settings">⚙</button>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // Word banks — combined combinatorially so the crowd never feels
+  // like the same dozen people typing on a loop.
+  // ---------------------------------------------------------------
+  var NAME_PREFIX = ["pixel","quiet","neon","lucky","rogue","salty","cosmic","tiny","loud","frozen","velvet","static","paper","copper","midnight","sunny","feral","polite","broken","glitch","spare","idle","humble","wild","lone","tidal","amber","ash","cloud","drift"];
+  var NAME_NOUN = ["falcon","comet","noodle","bandit","otter","wizard","goblin","pancake","raccoon","cactus","moth","turtle","viking","penguin","gremlin","llama","pretzel","sparrow","yeti","walrus","ferret","biscuit","phoenix","koala","badger","marmot","hornet","pigeon","gecko","panther"];
+  var NAME_STYLE = function(){
+    var p = NAME_PREFIX[rand(NAME_PREFIX.length)];
+    var n = NAME_NOUN[rand(NAME_NOUN.length)];
+    var cap = function(s){ return s.charAt(0).toUpperCase()+s.slice(1); };
+    var r = Math.random();
+    if(r < 0.4) return cap(p)+cap(n)+(Math.random()<0.5?rand(99):"");
+    if(r < 0.7) return p+"_"+n;
+    if(r < 0.9) return cap(p)+cap(n);
+    return p+"."+n+rand(9);
+  };
+
+  var CHAT_TEMPLATES = [
+    "wait {topic} just got so good",
+    "wait what did i just witness",
+    "no because {topic} is actually insane rn",
+    "chat did you see that or was it just me",
+    "im not okay this is too good",
+    "we do not deserve {streamer}",
+    "{streamer} really said watch this",
+    "the way i gasped out loud",
+    "okay THAT was a movie moment",
+    "someone please clip that",
+    "clip it clip it clip it",
+    "i've been here since the 3 digit viewer days and this is why",
+    "chat behave for five minutes challenge",
+    "mods are asleep post the {topic} lore",
+    "this is better than anything on tv tonight",
+    "the algorithm did something right for once",
+    "first time catching this live, worth the wait",
+    "{streamer} cooked with that one ngl",
+    "not me rearranging my whole evening for this",
+    "putting {topic} on the map fr fr",
+    "{topic} chat rise up",
+    "never seen {topic} handled like this before",
+    "underrated stream honestly, more people need this",
+    "the confidence on that last move though",
+    "screenshotting this moment for the archives",
+    "how is {streamer} not tired yet",
+    "we're all just here vibing at this point",
+    "genuinely can't look away right now",
+    "i logged on for five minutes and now it's been two hours",
+    "someone explain {topic} to my mom she just walked in",
+    "the chat delay is not helping my reactions",
+    "brb grabbing snacks do not spoil anything",
+    "the fact that {streamer} is doing this solo",
+    "okay who else has goosebumps right now",
+    "this needs to be a highlight reel later",
+    "day one supporter and still not over this stream",
+    "{streamer} out here making it look easy",
+    "someone start a countdown to the next {topic} moment",
+    "the energy in here tonight is unmatched",
+    "not gonna lie i teared up a little",
+    "chat is unusually well behaved for once",
+    "can we get a viewer poll on what happens next",
+    "this stream single-handedly fixed my week",
+    "the way everyone reacted at the same time lol",
+    "{streamer} deserves a raid after this",
+    "i came for five minutes and i'm never leaving",
+    "somebody's gonna reference this stream for years",
+    "the timing on that was way too perfect",
+    "okay {topic} slander stops today, this proves it",
+    "not the whole chat spamming at once again",
+    "we should archive this moment honestly",
+    "someone's parents are gonna ask why they're up this late",
+    "this is exactly why i don't miss these streams",
+    "the production value on this is wild for a stream",
+    "{streamer} really just did that without flinching",
+    "chat is going through it right now",
+    "i refuse to believe that just happened",
+    "we've officially entered the good part of the stream",
+    "somebody get {streamer} some water after this",
+    "the whole timeline is gonna be about {topic} tomorrow"
+  ];
+
+  var QUESTIONS = [
+    "wait how long has this been going",
+    "did i miss anything big",
+    "someone catch me up real quick",
+    "is the vod gonna be up after",
+    "what's the plan for {topic} after this",
+    "how many people are even watching right now",
+    "is this being recorded",
+    "what time did this start again",
+    "is {streamer} doing this every week now",
+    "are we getting a part two of {topic}",
+    "how is nobody talking about how good this is",
+    "who else found this stream through a friend"
+  ];
+
+  var REACTIONS = [
+    "LMAOOO","no shot","nooo way","im deceased 💀","this is so real",
+    "😭😭😭","🔥🔥🔥","👀👀👀","im crying","W","big W","actual cinema",
+    "the way i yelled","not me screaming at my screen","INSANE",
+    "🚨🚨🚨","GG","based","zero notes","ok that's actually elite",
+    "unreal","???","bro what","HELLO??","im obsessed","chills",
+    "🙌🙌🙌","perfect","no thoughts just vibes","cracked"
+  ];
+
+  var COMPLIMENTS = [
+    "{streamer} is actually the goat",
+    "{streamer} never misses honestly",
+    "most consistent streamer i watch, easily",
+    "{streamer} really said hold my drink",
+    "the most underrated person doing this right now",
+    "{streamer} has main character energy tonight"
+  ];
+
+  var SYSTEM_TEMPLATES = [
+    "{user} just hit follow",
+    "{user} just followed the stream",
+    "{user} subscribed for {n} months in a row",
+    "{user} gifted a membership to {user2}",
+    "{user} sent a boost to the stream",
+    "{user} is new here — say hi",
+    "{user} joined from a raid with {n} viewers",
+    "{user} just became a member",
+    "{user} shared the stream with {n} friends"
+  ];
+
+  var RAID_LINES = [
+    "WE ARE SO BACK", "a whole new crowd just walked in", "chat just doubled, everyone behave",
+    "the raid train has arrived", "hi to everyone just joining!!"
+  ];
+
+  function rand(n){ return Math.floor(Math.random()*n); }
+  function pick(arr){ return arr[rand(arr.length)]; }
+  function pad(n){ return n.toString(); }
+
+  // avoid immediate repeats
+  function pickFresh(arr, recent){
+    var tries = 0, val;
+    do{ val = pick(arr); tries++; } while(recent.indexOf(val) !== -1 && tries < 6);
+    recent.push(val);
+    if(recent.length > Math.max(4, Math.floor(arr.length/4))) recent.shift();
+    return val;
+  }
+  var recentChat = [], recentReact = [], recentSys = [];
+
+  // ---------------------------------------------------------------
+  // Settings
+  // ---------------------------------------------------------------
+  var settings = {
+    topic: "the stream",
+    streamer: "the streamer",
+    pace: "normal",
+    fontSize: 14,
+    accent: "#ffb454",
+    startViewers: 1284,
+    overlay: false
+  };
+
+  function loadSettings(){
+    try{
+      var raw = localStorage.getItem("crowdcast_settings_v1");
+      if(raw){
+        var saved = JSON.parse(raw);
+        for(var k in saved){ if(k in settings) settings[k] = saved[k]; }
+      }
+    }catch(e){ /* private mode / blocked storage — carry on with defaults */ }
+  }
+  function saveSettings(){
+    try{ localStorage.setItem("crowdcast_settings_v1", JSON.stringify(settings)); }catch(e){}
+  }
+  loadSettings();
+
+  // ---------------------------------------------------------------
+  // DOM refs
+  // ---------------------------------------------------------------
+  var $ = function(id){ return document.getElementById(id); };
+  var chatScroll = $("chatScroll");
+  var jumpBtn = $("jumpBtn");
+  var viewerCountEl = $("viewerCount");
+  var topicLabel = $("topicLabel");
+  var topicInput = $("topicInput");
+  var streamerInput = $("streamerInput");
+  var viewerInput = $("viewerInput");
+  var pauseBtn = $("pauseBtn");
+  var clearBtn = $("clearBtn");
+  var hypeBtn = $("hypeBtn");
+  var gearBtn = $("gearBtn");
+  var rail = $("rail");
+  var railScrim = $("railScrim");
+  var overlaySwitch = $("overlaySwitch");
+  var overlayRestore = $("overlayRestore");
+  var paceSeg = $("paceSeg");
+  var sizeSeg = $("sizeSeg");
+  var swatches = $("swatches");
+
+  topicInput.value = settings.topic;
+  streamerInput.value = settings.streamer;
+  viewerInput.value = settings.startViewers;
+  document.documentElement.style.setProperty("--accent", settings.accent);
+  document.documentElement.style.setProperty("--chat-fs", settings.fontSize + "px");
+  topicLabel.textContent = settings.topic;
+
+  Array.prototype.forEach.call(paceSeg.children, function(b){
+    b.classList.toggle("active", b.dataset.pace === settings.pace);
+    b.addEventListener("click", function(){
+      settings.pace = b.dataset.pace;
+      Array.prototype.forEach.call(paceSeg.children, function(x){ x.classList.toggle("active", x===b); });
+      saveSettings();
+    });
+  });
+  Array.prototype.forEach.call(sizeSeg.children, function(b){
+    b.classList.toggle("active", Number(b.dataset.size) === settings.fontSize);
+    b.addEventListener("click", function(){
+      settings.fontSize = Number(b.dataset.size);
+      document.documentElement.style.setProperty("--chat-fs", settings.fontSize + "px");
+      Array.prototype.forEach.call(sizeSeg.children, function(x){ x.classList.toggle("active", x===b); });
+      saveSettings();
+    });
+  });
+  Array.prototype.forEach.call(swatches.children, function(b){
+    b.classList.toggle("active", b.dataset.accent === settings.accent);
+    b.addEventListener("click", function(){
+      settings.accent = b.dataset.accent;
+      document.documentElement.style.setProperty("--accent", settings.accent);
+      Array.prototype.forEach.call(swatches.children, function(x){ x.classList.toggle("active", x===b); });
+      saveSettings();
+    });
+  });
+
+  topicInput.addEventListener("input", function(){
+    settings.topic = topicInput.value.trim() || "the stream";
+    topicLabel.textContent = settings.topic;
+    saveSettings();
+  });
+  streamerInput.addEventListener("input", function(){
+    settings.streamer = streamerInput.value.trim() || "the streamer";
+    saveSettings();
+  });
+  viewerInput.addEventListener("change", function(){
+    var v = Math.max(3, Math.min(999999, Number(viewerInput.value) || 3));
+    viewerInput.value = v;
+    settings.startViewers = v;
+    viewers = v;
+    renderViewers();
+    saveSettings();
+  });
+
+  // ---------------------------------------------------------------
+  // Rail open/close (mobile drawer)
+  // ---------------------------------------------------------------
+  function setRailOpen(open){
+    rail.classList.toggle("open", open);
+    railScrim.classList.toggle("show", open);
+  }
+  gearBtn.addEventListener("click", function(){ setRailOpen(true); });
+  railScrim.addEventListener("click", function(){ setRailOpen(false); });
+
+  // ---------------------------------------------------------------
+  // Overlay mode
+  // ---------------------------------------------------------------
+  function setOverlay(on){
+    settings.overlay = on;
+    document.body.classList.toggle("overlay-mode", on);
+    overlaySwitch.classList.toggle("on", on);
+    overlaySwitch.setAttribute("aria-checked", on ? "true" : "false");
+    overlayRestore.hidden = !on;
+    if(on) setRailOpen(false);
+    saveSettings();
+  }
+  overlaySwitch.addEventListener("click", function(){ setOverlay(!settings.overlay); });
+  overlayRestore.addEventListener("click", function(){ setRailOpen(true); });
+  setOverlay(settings.overlay);
+
+  // ---------------------------------------------------------------
+  // Username pool — a mix of "regulars" who post repeatedly and a
+  // trickle of brand-new names, the way a real chat looks.
+  // ---------------------------------------------------------------
+  function makeUser(){
+    var badge = null;
+    var r = Math.random();
+    if(r < 0.015) badge = "mod";
+    else if(r < 0.06) badge = "vip";
+    else if(r < 0.18) badge = "sub";
+    return { name: NAME_STYLE(), badge: badge, hue: rand(360) };
+  }
+  var regulars = [];
+  for(var i=0;i<24;i++) regulars.push(makeUser());
+
+  function someUser(){
+    if(Math.random() < 0.78) return pick(regulars);
+    var u = makeUser();
+    if(regulars.length > 60) regulars.shift();
+    regulars.push(u);
+    return u;
+  }
+
+  function initials(name){
+    var clean = name.replace(/[^a-zA-Z]/g, "");
+    if(clean.length >= 2) return (clean[0] + clean[clean.length-1]).toUpperCase();
+    return (clean || "??").slice(0,2).toUpperCase();
+  }
+
+  function avatarStyle(hue){
+    return "background: hsl(" + hue + " 70% 68%)";
+  }
+
+  // ---------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------
+  var atBottom = true;
+  var pendingCount = 0;
+  var MAX_MESSAGES = 150;
+
+  chatScroll.addEventListener("scroll", function(){
+    var gap = chatScroll.scrollHeight - chatScroll.scrollTop - chatScroll.clientHeight;
+    atBottom = gap < 40;
+    if(atBottom){ pendingCount = 0; jumpBtn.hidden = true; }
+  });
+
+  jumpBtn.addEventListener("click", function(){
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+    atBottom = true; pendingCount = 0; jumpBtn.hidden = true;
+  });
+
+  function trimHistory(){
+    while(chatScroll.children.length > MAX_MESSAGES){
+      chatScroll.removeChild(chatScroll.firstChild);
+    }
+  }
+
+  function appendNode(node){
+    chatScroll.appendChild(node);
+    trimHistory();
+    if(atBottom){
+      chatScroll.scrollTop = chatScroll.scrollHeight;
+    } else {
+      pendingCount++;
+      jumpBtn.hidden = false;
+      jumpBtn.textContent = "New messages ↓ (" + pendingCount + ")";
+    }
+  }
+
+  function chatNode(user, text, opts){
+    opts = opts || {};
+    var row = document.createElement("div");
+    row.className = "msg" + (opts.burst ? " burst" : "");
+    var av = document.createElement("div");
+    av.className = "avatar";
+    av.style.cssText = avatarStyle(user.hue);
+    av.textContent = initials(user.name);
+    var body = document.createElement("div");
+    body.className = "msg-body";
+    var line = document.createElement("div");
+    line.className = "msg-line";
+    var badgeHtml = user.badge ? '<span class="badge ' + user.badge + '">' + user.badge + '</span>' : "";
+    var uname = document.createElement("span");
+    uname.className = "uname";
+    uname.style.color = "hsl(" + user.hue + " 70% 72%)";
+    uname.textContent = user.name;
+    line.innerHTML = badgeHtml;
+    line.appendChild(uname);
+    line.appendChild(document.createTextNode(text));
+    body.appendChild(line);
+    row.appendChild(av);
+    row.appendChild(body);
+    return row;
+  }
+
+  function systemNode(text){
+    var row = document.createElement("div");
+    row.className = "msg system";
+    var av = document.createElement("div");
+    av.className = "avatar";
+    av.textContent = "★";
+    var body = document.createElement("div");
+    body.className = "msg-body";
+    var line = document.createElement("div");
+    line.className = "msg-line";
+    line.textContent = text;
+    body.appendChild(line);
+    row.appendChild(av);
+    row.appendChild(body);
+    return row;
+  }
+
+  function postChat(){
+    var pool = CHAT_TEMPLATES.concat(QUESTIONS, COMPLIMENTS);
+    var template = pickFresh(pool, recentChat);
+    var user = someUser();
+    var text = fillTemplate(template, user);
+    appendNode(chatNode(user, text));
+  }
+
+  function postReaction(){
+    var text = pickFresh(REACTIONS, recentReact);
+    var user = someUser();
+    appendNode(chatNode(user, text, { burst: true }));
+  }
+
+  function postSystem(){
+    var template = pickFresh(SYSTEM_TEMPLATES, recentSys);
+    var user = someUser();
+    appendNode(systemNode(fillSystem(template, user)));
+  }
+
+  function fillTemplate(template, primaryUser){
+    var n = 1 + rand(24);
+    return template
+      .replace(/\{topic\}/g, settings.topic)
+      .replace(/\{streamer\}/g, settings.streamer)
+      .replace(/\{n\}/g, n)
+      .replace(/\{user2\}/g, someUser().name)
+      .replace(/\{user\}/g, primaryUser.name);
+  }
+
+  function fillSystem(template, primaryUser){
+    var n = 2 + rand(140);
+    return template
+      .replace(/\{n\}/g, n)
+      .replace(/\{user2\}/g, someUser().name)
+      .replace(/\{user\}/g, primaryUser.name);
+  }
+
+  // ---------------------------------------------------------------
+  // Viewer count
+  // ---------------------------------------------------------------
+  var viewers = settings.startViewers;
+  function renderViewers(){
+    viewerCountEl.firstChild.textContent = Math.max(0, Math.round(viewers)).toLocaleString("en-US");
+  }
+  renderViewers();
+
+  function driftViewers(){
+    viewers += (Math.random() - 0.42) * Math.max(2, viewers * 0.004);
+    if(viewers < 3) viewers = 3;
+    renderViewers();
+  }
+
+  function raidBoost(){
+    var boost = Math.round(viewers * (0.08 + Math.random()*0.2)) + 15;
+    viewers += boost;
+    renderViewers();
+    appendNode(systemNode(pick(RAID_LINES) + " (+" + boost.toLocaleString("en-US") + " viewers)"));
+  }
+
+  // ---------------------------------------------------------------
+  // Scheduling loop
+  // ---------------------------------------------------------------
+  var PACE = {
+    chill:  { min: 1700, max: 3600 },
+    normal: { min: 700,  max: 1900 },
+    hype:   { min: 180,  max: 650  }
+  };
+
+  var playing = true;
+  var timer = null;
+  var viewerTimer = null;
+
+  function scheduleNext(){
+    if(!playing) return;
+    var p = PACE[settings.pace] || PACE.normal;
+    var delay = p.min + Math.random() * (p.max - p.min);
+    timer = setTimeout(tick, delay);
+  }
+
+  function tick(){
+    var r = Math.random();
+    if(r < 0.08){
+      postSystem();
+    } else if(r < 0.24){
+      postReaction();
+      // reactions often arrive in little clusters
+      if(Math.random() < 0.5){
+        setTimeout(function(){ if(playing) postReaction(); }, 90 + rand(220));
+      }
+      if(Math.random() < 0.22){
+        setTimeout(function(){ if(playing) postReaction(); }, 200 + rand(350));
+      }
+    } else {
+      postChat();
+    }
+    scheduleNext();
+  }
+
+  function start(){
+    playing = true;
+    pauseBtn.textContent = "⏸ Pause";
+    scheduleNext();
+    if(!viewerTimer) viewerTimer = setInterval(driftViewers, 1400);
+  }
+  function stop(){
+    playing = false;
+    pauseBtn.textContent = "▶ Resume";
+    clearTimeout(timer);
+    clearInterval(viewerTimer);
+    viewerTimer = null;
+  }
+
+  pauseBtn.addEventListener("click", function(){ playing ? stop() : start(); });
+  clearBtn.addEventListener("click", function(){ chatScroll.innerHTML = ""; pendingCount = 0; jumpBtn.hidden = true; });
+  hypeBtn.addEventListener("click", raidBoost);
+
+  // seed the feed so the page opens already alive
+  for(var s=0; s<7; s++){ postChat(); }
+  postSystem();
+
+  start();
+})();
+</script>
+</body>
+</html>
