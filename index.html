@@ -407,6 +407,12 @@
   }
   .swatch.active{ border-color: var(--text); }
 
+  .theme-note{
+    font-size: 11px;
+    color: var(--text-faint);
+    min-height: 14px;
+  }
+
   .toggle-row{
     display: flex;
     align-items: center;
@@ -526,13 +532,15 @@
       </div>
 
       <div class="field">
-        <label>Accent</label>
+        <label>Theme</label>
         <div class="swatches" id="swatches">
-          <button class="swatch active" data-accent="#ffb454" style="background:#ffb454" aria-label="Amber accent"></button>
+          <button class="swatch" data-accent="auto" style="background:conic-gradient(#ffb454,#7dd3fc,#e2a6ff,#7ee2a8,#ffb454)" aria-label="Automatic theme, follows time of day" title="Auto (follows time of day)"></button>
+          <button class="swatch" data-accent="#ffb454" style="background:#ffb454" aria-label="Amber accent"></button>
           <button class="swatch" data-accent="#7dd3fc" style="background:#7dd3fc" aria-label="Sky accent"></button>
           <button class="swatch" data-accent="#e2a6ff" style="background:#e2a6ff" aria-label="Orchid accent"></button>
           <button class="swatch" data-accent="#7ee2a8" style="background:#7ee2a8" aria-label="Mint accent"></button>
         </div>
+        <div class="theme-note" id="themeNote"></div>
       </div>
 
       <hr class="div">
@@ -554,7 +562,7 @@
       <button class="btn primary" id="hypeBtn">⚡ Trigger hype moment</button>
 
       <div class="rail-note">
-        For OBS: add this page as a <b>Browser Source</b>, size it to your layout, then turn on Overlay Mode to drop the panel chrome. Settings are remembered on this device via <code>localStorage</code>.
+        For OBS: run the included <code>obs_crowdcast.py</code> script for a settings panel right inside OBS, or add this page as a <b>Browser Source</b> by hand and turn on Overlay Mode to drop the panel chrome. Settings here are also remembered on this device via <code>localStorage</code>, and can be driven by URL (<code>?topic=&hellip;&amp;pace=hype&amp;accent=auto</code>).
       </div>
     </aside>
   </div>
@@ -719,7 +727,7 @@
     streamer: "the streamer",
     pace: "normal",
     fontSize: 14,
-    accent: "#ffb454",
+    accent: "auto",
     startViewers: 1284,
     overlay: false
   };
@@ -737,6 +745,65 @@
     try{ localStorage.setItem("crowdcast_settings_v1", JSON.stringify(settings)); }catch(e){}
   }
   loadSettings();
+
+  // A companion OBS script (or anyone hosting this page themselves) can
+  // drive every setting through the URL, e.g.
+  // index.html?topic=Valorant&streamer=Dana&pace=hype&accent=auto&overlay=1
+  // Query values win over whatever was saved locally, since an external
+  // controller is the source of truth once it's in use.
+  function applyQueryOverrides(){
+    var qs;
+    try{ qs = new URLSearchParams(window.location.search); }catch(e){ return; }
+    if(!qs || !qs.toString()) return;
+    if(qs.has("topic")) settings.topic = qs.get("topic").slice(0, 40) || settings.topic;
+    if(qs.has("streamer")) settings.streamer = qs.get("streamer").slice(0, 24) || settings.streamer;
+    if(qs.has("pace") && ["chill","normal","hype"].indexOf(qs.get("pace")) !== -1) settings.pace = qs.get("pace");
+    if(qs.has("size")){
+      var sz = Number(qs.get("size"));
+      if([13,14,17].indexOf(sz) !== -1) settings.fontSize = sz;
+    }
+    if(qs.has("accent")){
+      var a = qs.get("accent");
+      if(a === "auto" || /^#[0-9a-fA-F]{6}$/.test(a)) settings.accent = a;
+    }
+    if(qs.has("viewers")){
+      var v = Number(qs.get("viewers"));
+      if(!isNaN(v)) settings.startViewers = Math.max(3, Math.min(999999, Math.round(v)));
+    }
+    if(qs.has("overlay")) settings.overlay = qs.get("overlay") === "1" || qs.get("overlay") === "true";
+    saveSettings();
+  }
+  applyQueryOverrides();
+
+  // ---------------------------------------------------------------
+  // Theme — a fixed accent, or "auto" to daypart across four hues so
+  // a stream that runs for hours doesn't sit under the same light all
+  // night. Re-checked every 30s in case a session crosses a boundary.
+  // ---------------------------------------------------------------
+  var AUTO_STOPS = [
+    { from: 5,  to: 11, hue: "#7dd3fc", label: "Auto — morning (sky)" },
+    { from: 11, to: 17, hue: "#ffb454", label: "Auto — daytime (amber)" },
+    { from: 17, to: 21, hue: "#e2a6ff", label: "Auto — evening (orchid)" },
+    { from: 21, to: 29, hue: "#7ee2a8", label: "Auto — night (mint)" } // 21–24 and 0–5 wrap
+  ];
+  function autoStopForHour(h){
+    for(var i=0;i<AUTO_STOPS.length;i++){
+      var s = AUTO_STOPS[i];
+      if(h >= s.from && h < s.to) return s;
+      if(s.to > 24 && (h + 24) < s.to && (h + 24) >= s.from) return s;
+    }
+    return AUTO_STOPS[1];
+  }
+  function resolveAccent(){
+    if(settings.accent !== "auto") return { hue: settings.accent, label: null };
+    return autoStopForHour(new Date().getHours());
+  }
+  function applyAccent(){
+    var r = resolveAccent();
+    document.documentElement.style.setProperty("--accent", r.hue);
+    var note = document.getElementById("themeNote");
+    if(note) note.textContent = r.label || "";
+  }
 
   // ---------------------------------------------------------------
   // DOM refs
@@ -764,7 +831,8 @@
   topicInput.value = settings.topic;
   streamerInput.value = settings.streamer;
   viewerInput.value = settings.startViewers;
-  document.documentElement.style.setProperty("--accent", settings.accent);
+  applyAccent();
+  setInterval(applyAccent, 30000);
   document.documentElement.style.setProperty("--chat-fs", settings.fontSize + "px");
   topicLabel.textContent = settings.topic;
 
@@ -789,7 +857,7 @@
     b.classList.toggle("active", b.dataset.accent === settings.accent);
     b.addEventListener("click", function(){
       settings.accent = b.dataset.accent;
-      document.documentElement.style.setProperty("--accent", settings.accent);
+      applyAccent();
       Array.prototype.forEach.call(swatches.children, function(x){ x.classList.toggle("active", x===b); });
       saveSettings();
     });
